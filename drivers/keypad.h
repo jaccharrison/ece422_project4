@@ -27,7 +27,7 @@
 #define KEYPAD_COL3 0x40
 
 /* Timer CCR definitions for common clock signals - target polling freq 12Hz */
-#define KEYPAD_POLLING_INT_VLO 833
+#define KEYPAD_POLLING_INT_VLO 750 /* Assumes worst-case 6kHz freq for VLO */
 #define KEYPAD_POLLING_INT_LFXT 2730
 
 /* Mode switches */

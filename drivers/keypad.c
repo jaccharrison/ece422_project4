@@ -5,15 +5,18 @@ static unsigned keypad_flags;
 
 /**
  * init_keypad
- * Configures I/O ports and Timer A3 for use with a matrix keypad.
- * Sets the keypad into uppercase alphanumeric mode.
+ * Configures Timer A3 for use with a matrix keypad, and sets the keypad into
+ * uppercase alphanumeric mode.
+ *
+ * The following code should be either copied into the initialization function,
+ * or included in some other init_gpio function; it initializes the I/O pins
+ * necessary for operation of the keypad.
+ *   P9DIR = KEYPAD_OUTPUT_PINS; // Set output pins (used to poll columns)
+ *   P9REN = KEYPAD_INPUT_PINS; // Inputs use pull-up resistors
+ *   P9OUT = KEYPAD_INPUT_PINS; // Use pull-up resistors instead of pull-down
  */
 void init_keypad(void)
 {
-  P9DIR = KEYPAD_OUTPUT_PINS; /* Set output pins (used to poll columns) */
-  P9REN = KEYPAD_INPUT_PINS; /* Inputs use pull-up resistors */
-  P9OUT = KEYPAD_INPUT_PINS; /* Use pull-up resistors instead of pull-down */
-
   /* Configure TA3 to poll keypad columns
    * Checks what clock signal is driving ACLK to determine what value to
    * write to a count-control register to get an 12Hz polling frequency. 12Hz
@@ -68,7 +71,7 @@ void set_keypad_case(char upper_lower)
     keypad_flags &= ~LOWERCASE; /* Clear lowercase flag */
     for (i = 8; i; --i)
       for (j = 3; j; --j)
-        alphanum_keypad_lut[i][j] -= 0x20;
+	alphanum_keypad_lut[i][j] -= 0x20;
   }
   return;
 }
@@ -332,8 +335,8 @@ int keypad_poll_alphanum(void)
  */
 #pragma vector = TIMER3_A0_VECTOR
 __interrupt void TIMER3_A0_ISR(void)
- {
+{
    extern int pollflag;
    pollflag = 1; /* Signal to main() that the matrix keypad needs polled */
    return;
- }
+}
