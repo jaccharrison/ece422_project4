@@ -1,7 +1,12 @@
-#include "lcd.h"
+p#include "lcd.h"
 
-/* Holds configuration information */
-static unsigned config_flags;
+#define LCD_4bit_tx(A)							\
+  P2OUT &= 0xF0; P2OUT |= 0x0F & A; P2OUT |= LCD_E; P2OUT &= ~LCD_E;
+
+#define LCD_wait() TA3CCR0 |= CCIE; TA3CTL = (TASSEL_2 | MC_1);	\
+  _BIS_SR(LPM1_bits);
+
+void LCD_txbyte(char); /* Internal function used to send data to the LCD */
 
 /**
  * init_lcd
@@ -16,109 +21,96 @@ static unsigned config_flags;
  */
 void init_lcd(void)
 {
-  /* Initialize TB0 to control the r/w enable LCD pin:
-     SMCLK runs at 4MHz - we want out E bit to have a period > 1us and positive
-     pulse width >= 450ns. */
-  TB0CCTL3 = OUTMOD_3; /* Set-reset out mode on TB0.3 */
-  TB0CCR3 = 0x04; /* E set when timer reaches TB0CCR3 */
-  TB0CCR0 = 0x08; /* E reset when timer reaches TB0CCR0 */
-  TB0CCTL0 |= CCIE; /* Enable TB0.0 interrupt - disables timer */
-
-  P2OUT = 0; /* Initialize all of port 2 out to 0 */
+  TA3CCR0 = 800;
 
   /* Send a sequence of instructions that forces re-init of the LCD */
-  LCD_4bit_tx(LCD_INIT); /* Send re-init instruction */
-  /* Wait for another delay (>= 4.1 ms) */
-  TA3CCR1 = LCD_WAIT2_ACLK; TA3CCTL1 |= CCIE; /* Load next wait time */
-  TA3CTL = (TASSEL__ACLK | ID_1 | MC__UP); /* Start timer */
-  _BIS_SR(GIE | LPM3_bits); /* Enter LPM3 until timer completes */
-  LCD_4bit_tx(LCD_INIT); /* Send re-init instruction again */
-  TA3CTL = (TASSEL__ACLK | ID_1 | MC__UP); /* Wait once more */
-  _BIS_SR(GIE | LPM3_bits); /* Enter LPM3 until timer completes */
-
   LCD_4bit_tx(LCD_INIT);
 
-  /* Watch for interrupt on P2.4 - busy flag */
-  LCD_read_mode();
-  LCD_busy_wait(); /* Execution will stall - LPM enabled */
+  TA3CCR0 = LCD_WAIT2; TA3CCTL0 |= CCIE; /* Wait >= 4.1 ms */
+  TA3CTL = (TASSEL__SMCLK | ID_1 | MC__UP);
+  _BIS_SR(GIE | LPM1_bits); /* Enter LPM3 until timer completes */
 
-  LCD_write_mode();
-  LCD_4bit_tx(LCD_SET_4BIT); /* Set LCD into 4-bit mode */
-  LCD_read_mode();
-  LCD_busy_wait();
+  LCD_4bit_tx(LCD_INIT);
+  TA3CCR0 = LCD_WAIT3; TA3CCTL0 |= CCIE; /* Wait for >= 100us */
+  TA3CTL = (TASSEL__SMCLK | ID_1 | MC__UP);
+  _BIS_SR(GIE | LPM1_bits); /* Enter LPM3 until timer completes */
+  LCD_txbyte(LCD_FUNC_SET | LCD_FUNC_8BIT | LCD_SET_4BIT);
+  /* Finalize 4-bit interface mode and set font set 1 display line */
+  LCD_txbyte(LCD_FUNC_SET);
+  /* Set the display mode */
+  LCD_txbyte(0x0F);
+  /* Clear the display */
+  LCD_txbyte(LCD_CLEAR_DISP);
+  /* Set entry point to home */
+  LCD_txbyte(LCD_RETURN_HOME);
+  /* Set cursor to move to the right after a character is written */
+  LCD_txbyte(LCD_ENTRY_MODE_SET | LCD_ENTRY_INC);
+  LCD_wait();
+}
 
-  LCD_write_mode();
-  LCD_4bit_tx(LCD_SET_4BIT);
-  LCD_4bit_tx(0); /* Default font, 1 line */
-  LCD_read_mode();
-  LCD_busy_wait();
+/**
+ * LCD_txbyte
+ * Internal utility function - the real way that any byte of data gets sent to
+ * the LCD. This is only used by other functions in the external LCD API - it
+ * is not part of the API.
+ */
+void LCD_txbyte(char c)
+{
+  LCD_4bit_tx((c & 0xF0) >> 4);
+  LCD_wait();
+  LCD_4bit_tx(c & 0x0F)
+    LCD_wait();
+  return;
+}
 
-  LCD_write_mode();
-  LCD_4bit_tx(0);
-  LCD_4bit_tx(1);
-  LCD_read_mode();
-  LCD_busy_wait();
-
-  LCD_write_mode();
-  LCD_4bit_tx(0);
-  LCD_4bit_tx(0x06);
-  LCD_read_mode();
-  LCD_busy_wait();
-
-  LCD_write_mode();
-  LCD_4bit_tx(0);
-  LCD_4bit_tx(0xE);
-  LCD_read_mode();
-  LCD_busy_wait();
-
-  LCD_write_mode();
+/**
+ * lcd_print_char
+ * Prints a single character on the LCD
+ */
+void lcd_print_char(char c)
+{
   P2OUT |= LCD_RS;
-  LCD_4bit_tx(0x4);
-  LCD_4bit_tx(0x8);
+  LCD_txbyte(c);
+  P2OUT &= ~LCD_RS;
+  LCD_wait();
+}
 
+/**
+ * lcd_print_str
+ * Prints a null-terminated string starting at the address pointed to by the
+ * argument
+ */
+void lcd_print_str(char* c)
+{
+  while (*c) {
+    P2OUT |= LCD_RS;
+    LCD_txbyte(*(c++));
+    P2OUT &= ~LCD_RS;
+    LCD_wait();
+  }
   return;
 }
 
 /**
- * PORT2_VECTOR
- * Interrupt vector triggered when the busy flag goes low
+ * lcd_clr_screen
+ * Clears the lcd screen
  */
-#pragma vector = PORT2_VECTOR
-__interrupt void PORT2_ISR(void)
+void lcd_clr_screen(void)
 {
-  P2IFG = 0;
-  _BIC_SR(LPM1_EXIT);
+  LCD_txbyte(LCD_CLEAR_DISP);
+  LCD_wait();
   return;
-}
-
-/**
- * TIMER0_B0_VECTOR
- * Interrupt vector responsible for resetting and disabling TB0 after an enable
- *  signal is sent to the lcd.
- */
-#pragma vector = TIMER0_B0_VECTOR
-__interrupt void TIMER_B0_ISR(void)
-{
-  TB0CTL = MC__STOP; /* Stop TB0 */
-  TB0R = 0; /* Reset TB0 */
-  _BIC_SR(LPM1_EXIT);
 }
 
 /**
  * TIMER3_A1_VECTOR
- * Interrupt vector responsible for various timing delays:
- * - Initialization of LCD
+ * Interrupt vector responsible for various timing delays
  */
-#pragma vector = TIMER3_A1_VECTOR
-__interrupt void TIMER3_A1_ISR(void)
+#pragma vector = TIMER3_A0_VECTOR
+__interrupt void TIMER3_A0_ISR(void)
 {
-  switch (TA3IV) {
-  case 0x00: break; /* No interrupt */
-  case 0x02: /* CCR1 interrupt - lcd init timer */
-    TA3CTL = 0; /* Turn off TA3 */
-    _BIC_SR(LPM3_EXIT); /* Exit LPM3 */
-    break;
-  default: break;
-  }
+  TA3CTL = 0; /* Turn off TA3 */
+  TA3R = 0; /* Clear counter */
+  _BIC_SR(LPM1_EXIT); /* Exit LPM3 */
   return;
 }
