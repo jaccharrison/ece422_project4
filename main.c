@@ -4,6 +4,8 @@
 
 void init_gpio(void);
 void init_clocks(void);
+void lcd_print_char(char);
+void lcd_return_home(void);
 
 int main(void)
 {
@@ -16,15 +18,30 @@ int main(void)
   TA3CCR0 = LCD_WAIT1;
   TA3CCTL0 |= CCIE; /* Enable interrupt */
   TA3CTL = (TASSEL__SMCLK | ID_1 | MC__UP); /* Enable TA3 in up mode */
-  _BIS_SR(GIE | LPM1_bits); /* Enter LPM3 until LCD is ready for config */
-  init_lcd();
+  _BIS_SR(GIE);
+  LPM1; /* Enter LPM3 until LCD is ready for config */
+  init_lcd(TWO_LINES, SMALL_FONT);
 
   /* Begin LCD driver demo */
-  char *c = "Hello Ben!";
+  char *c = "Benjamin\nLewandowski";
+  char *mi = "A.";
+  char *mn = "Alex";
 
   lcd_print_str(c);
 
-  while(1);
+  lcd_set_cur(10, 1);
+
+  lcd_print_str(mi);
+
+  lcd_set_cur(3, 2);
+
+  lcd_print_char('v');
+
+  lcd_place_str(mn, 10, 1);
+
+  lcd_clr_screen();
+
+  for(;;);
 
   return 0;
 }
@@ -69,6 +86,6 @@ void init_clocks(void)
 #pragma vector = PORT1_VECTOR
 __interrupt void PORT1_ISR(void)
 {
-  _BIC_SR(LPM3_exit);
+  LPM1_EXIT;
   return;
 }
